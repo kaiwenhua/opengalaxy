@@ -1,0 +1,200 @@
+@import 'tailwindcss';
+
+/* `dark:` follows the app's own theme switch (html[data-theme]), not the OS setting. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * Theme tokens. Dark values are the defaults; [data-theme='light'] overrides them below.
+ * ink-950 → page background … ink-100 → primary text.
+ * fg    → translucent overlays (borders, hover fills): white on dark, black on light.
+ * shade → recessed fills (inputs, log, tab rail): black on dark, a cool grey on light.
+ */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
+
+  --color-ink-950: #07070a;
+  --color-ink-900: #0c0c11;
+  --color-ink-850: #111118;
+  --color-ink-800: #16161f;
+  --color-ink-700: #1f1f2a;
+  --color-ink-600: #2a2a37;
+  --color-ink-400: #6b6b7b;
+  --color-ink-300: #9a9aab;
+  --color-ink-100: #e8e8f0;
+  --color-fg: #ffffff;
+  --color-shade: #000000;
+}
+
+:root {
+  color-scheme: dark;
+  /* Driven by the current lighting colour (set from App). */
+  --accent: #8b5cf6;
+  --accent-fg: #ffffff;
+  --accent-soft: color-mix(in oklab, var(--accent) 18%, transparent);
+  --swatch-bg: #15151d;
+  --panel-top: rgba(255, 255, 255, 0.035);
+  --panel-bottom: rgba(255, 255, 255, 0.015);
+  --panel-border: rgba(255, 255, 255, 0.07);
+  --panel-shadow: 0 20px 50px -25px rgba(0, 0, 0, 0.8);
+  --page-glow: 14%;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-ink-950: #f3f3f7;
+  --color-ink-900: #ffffff;
+  --color-ink-850: #ffffff;
+  --color-ink-800: #ffffff;
+  --color-ink-700: #dedee6;
+  --color-ink-600: #b9b9c6;
+  --color-ink-400: #6c6c7c;
+  --color-ink-300: #4a4a59;
+  --color-ink-100: #15151c;
+  --color-fg: #0b0b14;
+  --color-shade: #8c8ca3;
+  --accent-soft: color-mix(in oklab, var(--accent) 12%, transparent);
+  --swatch-bg: #e4e4ec;
+  --panel-top: rgba(255, 255, 255, 0.9);
+  --panel-bottom: rgba(255, 255, 255, 0.75);
+  --panel-border: rgba(15, 15, 30, 0.08);
+  --panel-shadow: 0 20px 50px -30px rgba(30, 30, 60, 0.35);
+  --page-glow: 10%;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-ink-950);
+  background-image:
+    radial-gradient(1200px 600px at 15% -10%, color-mix(in oklab, var(--accent) var(--page-glow), transparent), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(34, 211, 238, 0.06), transparent 60%);
+  background-attachment: fixed;
+  color: var(--color-ink-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* ── Surfaces ───────────────────────────────────────────────── */
+
+.panel {
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+  border: 1px solid var(--panel-border);
+  border-radius: 1.25rem;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    var(--panel-shadow);
+  backdrop-filter: blur(12px);
+}
+
+/* ── Range slider ───────────────────────────────────────────── */
+
+.range {
+  --fill: 50%;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) 0 var(--fill), var(--color-ink-700) var(--fill) 100%);
+  outline: none;
+  cursor: pointer;
+}
+.range:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.range::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 0;
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--accent) 35%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.range:hover::-webkit-slider-thumb,
+.range:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.08);
+  box-shadow:
+    0 0 0 6px color-mix(in oklab, var(--accent) 40%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+.hue-range {
+  background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  height: 10px;
+}
+.hue-range::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+/* ── Keyboard preview ───────────────────────────────────────── */
+
+.board {
+  container-type: inline-size;
+  position: relative;
+  aspect-ratio: 18.25 / 6.25;
+}
+
+.key {
+  position: absolute;
+  padding: 0.22cqw;
+  --c: rgb(0 0 0);
+}
+.key > .cap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 0.55cqw;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.25)),
+    color-mix(in srgb, var(--c) 14%, #15151d);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 0 1.4cqw -0.3cqw var(--c),
+    inset 0 -0.25cqw 0 rgba(0, 0, 0, 0.45);
+  color: color-mix(in srgb, var(--c) 80%, #8a8a9a);
+  font-size: 0.82cqw;
+  font-weight: 500;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 0.45cqw 0.55cqw;
+  user-select: none;
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+.key > .cap:active {
+  transform: translateY(0.12cqw) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

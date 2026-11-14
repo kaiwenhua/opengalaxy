@@ -1,0 +1,25 @@
+# OpenGalaxy with Caddy, which handles HTTPS automatically.
+#
+# Public domain:   replace the address with your domain (Let's Encrypt is automatic).
+# LAN-only server: keep `tls internal`. Caddy creates its own CA; install its root
+#                  certificate on your PC once (`caddy trust`, or copy
+#                  root.crt from Caddy's data directory) so the browser trusts it.
+
+galaxy.example.lan {
+	tls internal
+
+	root * /srv/opengalaxy
+	encode zstd gzip
+	try_files {path} /index.html
+	file_server
+
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+		Permissions-Policy "hid=(self)"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+}
