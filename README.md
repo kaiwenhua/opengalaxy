@@ -60,11 +60,28 @@ Galaxy80. Details, sources and a USB-capture workflow are in [docs/PROTOCOL.md](
 
 VIA support (`src/hid/protocols/via.ts`) stays in for VIA-compatible boards and powers demo mode.
 
-## Desktop app later
+## Portable desktop app (no installation)
 
-The output of `npm run build` is a static site, so it can be wrapped with Electron or Tauri. Electron
-supports WebHID via `session.setDevicePermissionHandler` / `select-hid-device`; with Tauri you'd swap
-`HidTransport` for a Rust `hidapi` transport behind the same `Transport` interface.
+```bash
+npm run desktop        # → release/OpenGalaxy.exe (~7 MB, needs the Go toolchain to build)
+```
+
+`OpenGalaxy.exe` is a single file. Double-click it and it:
+
+1. serves the bundled app on `http://127.0.0.1:47180` (localhost counts as a secure origin, so
+   WebHID works without HTTPS),
+2. opens it in **Edge** (preinstalled on Windows 10/11; Chrome/Brave also work) in app mode, which gives
+   it its own window with no tabs or address bar,
+3. exits by itself a few seconds after the window is closed.
+
+Settings and the keyboard permission live in a dedicated browser profile under
+`%LOCALAPPDATA%\OpenGalaxy`. For a fully portable setup (e.g. a USB stick), create a folder named
+`OpenGalaxyData` next to the exe and everything is stored there instead. Starting the exe again while
+it runs just opens another window.
+
+The launcher source is in [`desktop/`](desktop/). It's plain Go with no dependencies; `go-winres` is used
+at build time for the icon and version info. The exe isn't code-signed, so a copy downloaded from
+the internet triggers a Windows SmartScreen prompt the first time.
 
 ## License
 

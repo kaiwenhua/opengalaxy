@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import '@fontsource-variable/inter';
 import './index.css';
 import App from './App';
+import { connectToDesktopLauncher } from './lib/desktop';
+
+void connectToDesktopLauncher();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
