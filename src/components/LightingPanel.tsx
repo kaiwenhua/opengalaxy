@@ -10,7 +10,7 @@ import {
 } from '../hid/types';
 import { gradientCss } from '../lib/gradient';
 import { ColorPicker } from './ColorPicker';
-import { GradientEditor, type CustomWaveStatus } from './GradientEditor';
+import { GradientEditor, type CustomWaveStatus, type GradientLibrary } from './GradientEditor';
 import { SectionTitle, Slider, cx } from './ui';
 
 const RAINBOW = 'linear-gradient(90deg,#f43f5e,#f59e0b,#22c55e,#06b6d4,#8b5cf6)';
@@ -43,11 +43,13 @@ export function LightingPanel({
   lighting,
   onChange,
   customWave,
+  gradientLibrary,
 }: {
   lighting: LightingState;
   onChange: (patch: Partial<LightingState>) => void;
   /** Keyboard status for Custom wave, shown under the gradient editor. */
   customWave: CustomWaveStatus;
+  gradientLibrary: GradientLibrary;
 }) {
   const def = effectDef(lighting.effect);
   const isWave = lighting.effect === 'wave';
@@ -139,7 +141,12 @@ export function LightingPanel({
       </div>
 
       {isCustom ? (
-        <GradientEditor stops={lighting.gradient} onChange={(gradient) => onChange({ gradient })} status={customWave} />
+        <GradientEditor
+          stops={lighting.gradient}
+          onChange={(gradient) => onChange({ gradient })}
+          status={customWave}
+          library={gradientLibrary}
+        />
       ) : (
         <section>
           <SectionTitle

@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { GRADIENT_MAX, GRADIENT_MIN, type GradientStop } from '../hid/types';
-import { colorAt, evenStops, gradientCss, sortStops } from '../lib/gradient';
+import { colorAt, evenStops, gradientCss, sameStops, sortStops } from '../lib/gradient';
+import { MAX_SAVED_GRADIENTS, type SavedGradient } from '../state/settings';
 import { ColorPicker } from './ColorPicker';
 import { Button, SectionTitle, cx } from './ui';
 
@@ -37,6 +38,112 @@ const QUICK_GRADIENTS: { name: string; stops: GradientStop[] }[] = [
   { name: 'Rainbow', stops: evenStops(['#ff0000', '#ff8800', '#ffee00', '#22dd22', '#00ccff', '#3344ff', '#aa22ff']) },
 ];
 
+/** The user's saved gradients: save the current one under a name, apply or delete saved ones. */
+function MyGradients({
+  library,
+  stops,
+  onApply,
+}: {
+  library: GradientLibrary;
+  stops: GradientStop[];
+  onApply: (stops: GradientStop[]) => void;
+}) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [justSaved, setJustSaved] = useState<string | null>(null);
+  const current = library.saved.find((g) => sameStops(sortStops(g.stops), sortStops(stops)));
+
+  const save = () => {
+    const finalName = name.trim() || `Gradient ${library.saved.length + 1}`;
+    library.onSave(finalName, stops);
+    setNaming(false);
+    setName('');
+    setJustSaved(finalName);
+    setTimeout(() => setJustSaved(null), 2500);
+  };
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-xs text-ink-400">
+          My gradients{library.saved.length > 0 && ` · ${library.saved.length}/${MAX_SAVED_GRADIENTS}`}
+        </span>
+        {!naming && (
+          <button
+            type="button"
+            onClick={() => setNaming(true)}
+            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--accent)] hover:bg-fg/[0.06]"
+          >
+            {justSaved ? `✓ Saved "${justSaved}"` : current ? `Saved as "${current.name}" · save again` : '+ Save gradient'}
+          </button>
+        )}
+      </div>
+
+      {naming && (
+        <form
+          className="mb-3 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save();
+          }}
+        >
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setNaming(false)}
+            placeholder={current?.name ?? `Gradient ${library.saved.length + 1}`}
+            maxLength={40}
+            aria-label="Gradient name"
+            className="h-9 min-w-0 flex-1 rounded-lg border border-fg/[0.08] bg-shade/25 px-3 text-sm outline-none placeholder:text-ink-400 focus:border-[var(--accent)]"
+          />
+          <Button type="submit" variant="primary" className="h-9 px-3 text-xs">
+            Save
+          </Button>
+          <Button type="button" variant="ghost" className="h-9 px-3 text-xs" onClick={() => setNaming(false)}>
+            Cancel
+          </Button>
+        </form>
+      )}
+
+      {library.saved.length === 0 ? (
+        !naming && <p className="text-xs text-ink-400">Save the current gradient to find it here again.</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {library.saved.map((g) => {
+            const active = current?.id === g.id;
+            return (
+              <span
+                key={g.id}
+                className={cx(
+                  'group flex items-center rounded-lg border text-xs transition',
+                  active
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-ink-100'
+                    : 'border-fg/[0.08] bg-fg/[0.03] text-ink-300 hover:border-fg/20 hover:text-ink-100',
+                )}
+              >
+                <button type="button" onClick={() => onApply(g.stops)} className="flex items-center gap-2 py-1 pr-1.5 pl-1">
+                  <span className="h-5 w-8 rounded-md" style={{ background: gradientCss(g.stops, '90deg', 16) }} />
+                  <span className="max-w-32 truncate">{g.name}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => library.onDelete(g.id)}
+                  aria-label={`Delete gradient ${g.name}`}
+                  title="Delete"
+                  className="mr-1 rounded px-1 text-ink-400 opacity-0 transition hover:text-rose-600 group-hover:opacity-100 focus:opacity-100 dark:hover:text-rose-300"
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Dragging a handle this far (px) above/below the bar removes the colour on release. */
 const REMOVE_DISTANCE = 48;
 const MAX_POS = 0.999;
@@ -49,14 +156,22 @@ const clampPos = (p: number) => Math.min(MAX_POS, Math.max(0, p));
  * - drag a handle away from the bar, or press Delete, to remove it
  * - arrow keys nudge the selected handle (Shift = 5 %)
  */
+export interface GradientLibrary {
+  saved: SavedGradient[];
+  onSave: (name: string, stops: GradientStop[]) => void;
+  onDelete: (id: string) => void;
+}
+
 export function GradientEditor({
   stops,
   onChange,
   status,
+  library,
 }: {
   stops: GradientStop[];
   onChange: (stops: GradientStop[]) => void;
   status: CustomWaveStatus;
+  library: GradientLibrary;
 }) {
   const [selected, setSelected] = useState(0);
   const [removing, setRemoving] = useState<number | null>(null);
@@ -215,6 +330,15 @@ export function GradientEditor({
       )}
 
       {current && <ColorPicker value={current.color} onChange={(color) => update(sel, { color })} />}
+
+      <MyGradients
+        library={library}
+        stops={stops}
+        onApply={(s) => {
+          onChange(s.map((x) => ({ ...x })));
+          setSelected(0);
+        }}
+      />
 
       <div>
         <span className="mb-2 block text-xs text-ink-400">Quick gradients</span>

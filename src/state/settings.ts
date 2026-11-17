@@ -9,6 +9,7 @@ import {
   WAVE_LENGTH_MIN,
   type Direction,
   type EffectId,
+  type GradientStop,
   type LightingState,
 } from '../hid/types';
 
@@ -23,9 +24,19 @@ export interface Preset {
 
 export type TabId = 'lighting' | 'presets' | 'device';
 
+/** A named Custom wave gradient in the user's library. */
+export interface SavedGradient {
+  id: string;
+  name: string;
+  stops: GradientStop[];
+}
+
+export const MAX_SAVED_GRADIENTS = 60;
+
 export interface Settings {
   lighting: LightingState;
   presets: Preset[];
+  gradients: SavedGradient[];
   /** Push every change to the keyboard as it happens. */
   liveSync: boolean;
   /** Commit to keyboard memory a moment after the last change. */
@@ -66,6 +77,7 @@ const systemTheme = (): Theme => {
 const DEFAULTS: Settings = {
   lighting: DEFAULT_LIGHTING,
   presets: [],
+  gradients: [],
   liveSync: true,
   autoSave: true,
   tab: 'lighting',
@@ -106,6 +118,13 @@ function load(): Settings {
             .filter((x): x is Preset => !!x && typeof x.id === 'string' && typeof x.name === 'string')
             .map((x) => ({ id: x.id, name: x.name.slice(0, 40), lighting: sanitizeLighting(x.lighting) }))
         : [],
+      gradients: Array.isArray(p.gradients)
+        ? p.gradients
+            .filter((g): g is SavedGradient => !!g && typeof g.id === 'string' && typeof g.name === 'string')
+            .map((g) => ({ id: g.id, name: g.name.slice(0, 40), stops: sanitizeStops(g.stops) }))
+            .filter((g): g is SavedGradient => g.stops !== null)
+            .slice(0, MAX_SAVED_GRADIENTS)
+        : [],
       liveSync: typeof p.liveSync === 'boolean' ? p.liveSync : DEFAULTS.liveSync,
       autoSave: typeof p.autoSave === 'boolean' ? p.autoSave : DEFAULTS.autoSave,
       tab: p.tab === 'presets' || p.tab === 'device' ? p.tab : 'lighting',
@@ -121,14 +140,20 @@ export function useSettings() {
   const [settings, setSettings] = useState<Settings>(load);
 
   useEffect(() => {
-    const t = setTimeout(() => {
+    const persist = () => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
       } catch {
         /* storage full or blocked — preferences just won't persist */
       }
-    }, 250);
-    return () => clearTimeout(t);
+    };
+    const t = setTimeout(persist, 250);
+    // Closing the window right after a change must not lose it.
+    window.addEventListener('pagehide', persist);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pagehide', persist);
+    };
   }, [settings]);
 
   const update = useCallback(
@@ -156,5 +181,20 @@ export function useSettings() {
     setSettings((s) => ({ ...s, presets: s.presets.filter((p) => p.id !== id) }));
   }, []);
 
-  return { settings, update, setLighting, savePreset, deletePreset };
+  /** Saves the given stops under a name (an existing gradient with the same name is replaced). */
+  const saveGradient = useCallback((name: string, stops: GradientStop[]) => {
+    const clean = name.trim().slice(0, 40) || 'My gradient';
+    setSettings((s) => {
+      const existing = s.gradients.find((g) => g.name.toLowerCase() === clean.toLowerCase());
+      const entry: SavedGradient = { id: existing?.id ?? crypto.randomUUID(), name: clean, stops: stops.map((x) => ({ ...x })) };
+      const rest = s.gradients.filter((g) => g.id !== entry.id);
+      return { ...s, gradients: [...rest, entry].slice(-MAX_SAVED_GRADIENTS) };
+    });
+  }, []);
+
+  const deleteGradient = useCallback((id: string) => {
+    setSettings((s) => ({ ...s, gradients: s.gradients.filter((g) => g.id !== id) }));
+  }, []);
+
+  return { settings, update, setLighting, savePreset, deletePreset, saveGradient, deleteGradient };
 }
