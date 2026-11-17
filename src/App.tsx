@@ -237,7 +237,7 @@ export default function App() {
     <div className="mx-auto max-w-6xl px-4 pt-6 pb-16 sm:px-8 sm:pt-8">
       <Header kb={kb} theme={theme} onThemeChange={(t) => update({ theme: t })} />
 
-      <Banners kb={kb} />
+      <Banners kb={kb} desktop={desktop} />
 
       <section className="mt-8 sm:mt-10">
         <div className="mx-auto max-w-5xl">
@@ -320,7 +320,7 @@ export default function App() {
   );
 }
 
-function Banners({ kb }: { kb: ReturnType<typeof useKeyboard> }) {
+function Banners({ kb, desktop }: { kb: ReturnType<typeof useKeyboard>; desktop: boolean }) {
   const items: { tone: 'warn' | 'error' | 'info'; text: string }[] = [];
   if (!KeyboardController.isWebHidSupported) {
     // Browsers only expose WebHID on secure origins (HTTPS or localhost).
@@ -336,6 +336,13 @@ function Banners({ kb }: { kb: ReturnType<typeof useKeyboard> }) {
     items.push({
       tone: 'warn',
       text: `Connected in raw mode — lighting changes stay in the preview for now. ${kb.device?.protocolNote ?? ''}`.trim(),
+    });
+  if (desktop && kb.status === 'disconnected')
+    items.push({
+      tone: 'warn',
+      text:
+        'The keyboard is not connected in this window yet. The desktop app has its own browser profile, so click ' +
+        '"Connect" (top right) once and pick the Galaxy80. After that it reconnects automatically on every start.',
     });
   if (kb.error) items.push({ tone: 'error', text: kb.error });
   if (!items.length) return null;

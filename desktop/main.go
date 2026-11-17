@@ -56,20 +56,35 @@ func run() error {
 		return err
 	}
 
+	exe, _ := os.Executable()
+	logf("start build %s (%s)", version, exe)
+
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
 	if err != nil {
-		// Already running? Then just open another window of the running instance.
-		if isOurServer(preferredPort) {
-			browser, err := findBrowser()
-			if err != nil {
-				return err
+		if running, ok := runningBuild(preferredPort); ok {
+			if running == version {
+				// Same build already running: just open another window of it.
+				logf("build %s already running, opening another window", running)
+				browser, err := findBrowser()
+				if err != nil {
+					return err
+				}
+				return browserCommand(browser, appURL(preferredPort), profile).Start()
 			}
-			cmd := browserCommand(browser, appURL(preferredPort), profile)
-			return cmd.Start()
-		}
-		// Port taken by something else: fall back to a random port. Works, but this
-		// session gets a different origin (separate settings and permission).
-		if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+			// A different (older) build is running. Don't hand the user its outdated app:
+			// ask it to quit, then take over.
+			logf("replacing running build %s", running)
+			if err := askToQuit(preferredPort); err != nil {
+				return fmt.Errorf("an older OpenGalaxy (%s) is still running.\nClose its window, wait a few seconds and start again.", running)
+			}
+			ln, err = listenWhenFree(preferredPort, 10*time.Second)
+			if err != nil {
+				return fmt.Errorf("the previous OpenGalaxy did not exit: %w", err)
+			}
+			time.Sleep(1500 * time.Millisecond) // let its browser profile unlock
+		} else if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+			// Port taken by something else: fall back to a random port. Works, but this
+			// session gets a different origin (separate settings and permission).
 			return fmt.Errorf("could not open a local port: %w", err)
 		}
 	}
@@ -112,7 +127,10 @@ func run() error {
 	_ = srv.Close()
 
 	// Send whatever the page asked to be stored on exit (e.g. a Custom wave still image).
-	if p := life.takePlan(); p != nil {
+	p := life.takePlan()
+	if p == nil {
+		logf("exit (no exit plan)")
+	} else {
 		start := time.Now()
 		if err := replayPlan(p); err != nil {
 			logf("exit plan failed after %v: %v", time.Since(start).Round(time.Millisecond), err)
@@ -146,15 +164,42 @@ func appURL(port int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/", port)
 }
 
-// isOurServer reports whether an OpenGalaxy launcher already serves the given port.
-func isOurServer(port int) bool {
+// runningBuild reports whether an OpenGalaxy launcher already serves the port, and its build.
+func runningBuild(port int) (string, bool) {
 	client := http.Client{Timeout: 800 * time.Millisecond}
 	res, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, pingPath))
 	if err != nil {
-		return false
+		return "", false
 	}
 	defer res.Body.Close()
-	return res.StatusCode == http.StatusOK && res.Header.Get("X-OpenGalaxy") != ""
+	build := res.Header.Get("X-OpenGalaxy")
+	return build, res.StatusCode == http.StatusOK && build != ""
+}
+
+// askToQuit tells a running launcher to exit (it still runs its exit plan first).
+func askToQuit(port int) error {
+	req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d%s", port, quitPath), nil)
+	req.Header.Set(quitHeader, "1")
+	res, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("running launcher answered %s", res.Status)
+	}
+	return nil
+}
+
+func listenWhenFree(port int, timeout time.Duration) (net.Listener, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil || time.Now().After(deadline) {
+			return ln, err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // profileDir returns the browser profile folder. A folder named "OpenGalaxyData" next to

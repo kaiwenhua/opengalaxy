@@ -86,7 +86,9 @@ if (process.platform === 'win32' || process.env.GOOS === 'windows') {
 console.log('› Compiling');
 mkdirSync(join(root, 'release'), { recursive: true });
 const exe = join(root, 'release', process.platform === 'win32' ? 'OpenGalaxy.exe' : 'OpenGalaxy');
-const ldflags = [`-s -w -X main.version=${version}`, process.platform === 'win32' ? '-H=windowsgui' : '']
+// Build id = package version + UTC timestamp, so a running older build can be told apart.
+const buildId = `${version}+${new Date().toISOString().replace(/[-:]/g, '').slice(0, 13)}`;
+const ldflags = [`-s -w -X main.version=${buildId}`, process.platform === 'win32' ? '-H=windowsgui' : '']
   .filter(Boolean)
   .join(' ');
 run(go, ['build', '-trimpath', `-ldflags=${ldflags}`, '-o', exe, '.'], { cwd: desktop, env: { ...process.env, CGO_ENABLED: '0' } });

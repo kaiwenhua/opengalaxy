@@ -54,12 +54,18 @@ func findBrowser() (string, error) {
 // profile keeps the window independent of the user's normal browser (so the process
 // lives exactly as long as our window) and stores settings + the HID permission.
 func browserCommand(browser, url, profile string) *exec.Cmd {
-	return exec.Command(browser,
-		"--app="+url,
-		"--user-data-dir="+profile,
+	args := []string{
+		"--app=" + url,
+		"--user-data-dir=" + profile,
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-sync",
 		"--window-size=1280,900",
-	)
+	}
+	// Development aid for automated end-to-end tests: OPENGALAXY_DEBUG_PORT=9333
+	// exposes the window via the DevTools protocol on localhost.
+	if p := os.Getenv("OPENGALAXY_DEBUG_PORT"); p != "" {
+		args = append(args, "--remote-debugging-port="+p)
+	}
+	return exec.Command(browser, args...)
 }

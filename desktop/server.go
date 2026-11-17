@@ -16,6 +16,10 @@ const (
 	heartbeatPath = "/__opengalaxy/heartbeat"
 	byePath       = "/__opengalaxy/bye"
 	onExitPath    = "/__opengalaxy/on-exit"
+	quitPath      = "/__opengalaxy/quit"
+	// Custom header for quit: browsers can't send it cross-site without a CORS preflight
+	// (which this server never approves), so only local programs like a newer launcher can.
+	quitHeader = "X-OpenGalaxy-Quit"
 )
 
 // Page-visible lifecycle:
@@ -90,6 +94,15 @@ func newHandler(site fs.FS, port int, life *lifecycle) http.Handler {
 			}
 			handlePlan(w, r, life)
 			return
+		case quitPath:
+			if r.Method != http.MethodPost || r.Header.Get(quitHeader) != "1" || r.Header.Get("Origin") != "" {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			logf("quit requested by a newer launcher")
+			w.WriteHeader(http.StatusNoContent)
+			go life.stop()
+			return
 		}
 
 		serveFile(w, r, site)
@@ -141,8 +154,15 @@ type lifecycle struct {
 
 func (l *lifecycle) setPlan(p *exitPlan) {
 	l.mu.Lock()
+	had := l.plan != nil
 	l.plan = p
 	l.mu.Unlock()
+	switch {
+	case p != nil && !had:
+		logf("exit plan received (%d steps)", len(p.Steps))
+	case p == nil && had:
+		logf("exit plan cleared")
+	}
 }
 
 func (l *lifecycle) takePlan() *exitPlan {
