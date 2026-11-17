@@ -1,6 +1,7 @@
 import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { GRADIENT_MAX, GRADIENT_MIN, type GradientStop } from '../hid/types';
 import { colorAt, evenStops, gradientCss, sameStops, sortStops } from '../lib/gradient';
+import { downloadGradients, mergeGradients, parseGradientFile } from '../lib/gradientFile';
 import { MAX_SAVED_GRADIENTS, type SavedGradient } from '../state/settings';
 import { ColorPicker } from './ColorPicker';
 import { Button, SectionTitle, cx } from './ui';
@@ -51,7 +52,23 @@ function MyGradients({
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
   const [justSaved, setJustSaved] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const current = library.saved.find((g) => sameStops(sortStops(g.stops), sortStops(stops)));
+
+  const importFile = async (file: File) => {
+    try {
+      const incoming = parseGradientFile(await file.text());
+      const r = mergeGradients(library.saved, incoming);
+      library.onReplaceAll(r.gradients);
+      const parts = [`Imported ${r.added} gradient${r.added === 1 ? '' : 's'}`];
+      if (r.skipped) parts.push(`${r.skipped} already saved`);
+      if (r.dropped) parts.push(`${r.dropped} not added (limit of ${MAX_SAVED_GRADIENTS} reached)`);
+      setMessage({ tone: 'ok', text: parts.join(' · ') });
+    } catch (e) {
+      setMessage({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   const save = () => {
     const finalName = name.trim() || `Gradient ${library.saved.length + 1}`;
@@ -64,20 +81,67 @@ function MyGradients({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-xs text-ink-400">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs whitespace-nowrap text-ink-400">
           My gradients{library.saved.length > 0 && ` · ${library.saved.length}/${MAX_SAVED_GRADIENTS}`}
         </span>
-        {!naming && (
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            onClick={() => setNaming(true)}
-            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--accent)] hover:bg-fg/[0.06]"
+            onClick={() => fileInput.current?.click()}
+            title="Add gradients from an exported .json file"
+            className="rounded-md px-2 py-1 text-xs text-ink-400 hover:bg-fg/[0.06] hover:text-ink-100"
           >
-            {justSaved ? `✓ Saved "${justSaved}"` : current ? `Saved as "${current.name}" · save again` : '+ Save gradient'}
+            Import
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => {
+              downloadGradients(library.saved);
+              setMessage({ tone: 'ok', text: `Exported ${library.saved.length} gradient${library.saved.length === 1 ? '' : 's'} to your Downloads folder` });
+            }}
+            disabled={library.saved.length === 0}
+            title="Save all your gradients to a .json file"
+            className="rounded-md px-2 py-1 text-xs text-ink-400 hover:bg-fg/[0.06] hover:text-ink-100 disabled:pointer-events-none disabled:opacity-40"
+          >
+            Export
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            aria-label="Import gradients file"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ''; // allow importing the same file again
+              if (file) void importFile(file);
+            }}
+          />
+        </div>
       </div>
+
+      {!naming && (
+        <button
+          type="button"
+          onClick={() => setNaming(true)}
+          className="-ml-2 mb-2 max-w-full truncate rounded-md px-2 py-1 text-left text-xs font-medium text-[var(--accent)] hover:bg-fg/[0.06]"
+        >
+          {justSaved ? `✓ Saved "${justSaved}"` : current ? `✓ Saved as "${current.name}" · save again` : '+ Save current gradient'}
+        </button>
+      )}
+
+      {message && (
+        <p
+          role="status"
+          className={cx(
+            'mb-2 text-xs',
+            message.tone === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300',
+          )}
+        >
+          {message.text}
+        </p>
+      )}
 
       {naming && (
         <form
@@ -160,6 +224,8 @@ export interface GradientLibrary {
   saved: SavedGradient[];
   onSave: (name: string, stops: GradientStop[]) => void;
   onDelete: (id: string) => void;
+  /** Replaces the library (import, after merging). */
+  onReplaceAll: (gradients: SavedGradient[]) => void;
 }
 
 export function GradientEditor({

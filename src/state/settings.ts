@@ -196,5 +196,10 @@ export function useSettings() {
     setSettings((s) => ({ ...s, gradients: s.gradients.filter((g) => g.id !== id) }));
   }, []);
 
-  return { settings, update, setLighting, savePreset, deletePreset, saveGradient, deleteGradient };
+  /** Replaces the whole gradient library (used by import after merging). */
+  const setGradients = useCallback((gradients: SavedGradient[]) => {
+    setSettings((s) => ({ ...s, gradients: gradients.slice(0, MAX_SAVED_GRADIENTS) }));
+  }, []);
+
+  return { settings, update, setLighting, savePreset, deletePreset, saveGradient, deleteGradient, setGradients };
 }

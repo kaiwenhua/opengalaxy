@@ -29,7 +29,8 @@ const MAX_FRAME_FAILURES = 6;
 
 export default function App() {
   const kb = useKeyboard();
-  const { settings, update, setLighting, savePreset, deletePreset, saveGradient, deleteGradient } = useSettings();
+  const { settings, update, setLighting, savePreset, deletePreset, saveGradient, deleteGradient, setGradients } =
+    useSettings();
   const { lighting, liveSync, autoSave, tab, theme } = settings;
   const canSync = kb.status === 'connected' && kb.canControlLighting;
 
@@ -295,7 +296,12 @@ export default function App() {
             lighting={lighting}
             onChange={setLighting}
             customWave={customWaveStatus}
-            gradientLibrary={{ saved: settings.gradients, onSave: saveGradient, onDelete: deleteGradient }}
+            gradientLibrary={{
+              saved: settings.gradients,
+              onSave: saveGradient,
+              onDelete: deleteGradient,
+              onReplaceAll: setGradients,
+            }}
           />
         )}
         {tab === 'presets' && (
