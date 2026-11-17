@@ -23,6 +23,8 @@ const TABS: { id: TabId; label: string }[] = [
 const FALLBACK_ACCENT = '#8b5cf6';
 /** Target interval between live Custom wave frames (~25 fps; the keyboard may manage less). */
 const FRAME_MS = 40;
+/** Consecutive failed frames (with growing back-off, ~5 s in total) before streaming stops. */
+const MAX_FRAME_FAILURES = 6;
 
 export default function App() {
   const kb = useKeyboard();
@@ -92,17 +94,27 @@ export default function App() {
     void (async () => {
       let frames = 0;
       let windowStart = performance.now();
+      let failures = 0;
       while (!stopped) {
         const start = performance.now();
         const leds = frameToLeds(KEYS, renderFrame(KEYS, lightingRef.current, start / 1000, []));
         try {
           await keyboard.sendLiveFrame(leds);
+          failures = 0;
         } catch (e) {
           if (stopped) return;
           const msg = e instanceof Error ? e.message : String(e);
-          keyboard.note(`Custom wave stopped: ${msg}`, 'error');
-          setStream({ fps: null, error: msg });
-          return;
+          // Brief hiccups (keyboard busy saving, USB glitch): back off and keep going.
+          // Only give up after repeated failures over several seconds.
+          failures++;
+          if (failures === 1) keyboard.note(`Custom wave: frame failed, retrying (${msg})`, 'error');
+          if (failures >= MAX_FRAME_FAILURES) {
+            keyboard.note(`Custom wave stopped: ${msg}`, 'error');
+            setStream({ fps: null, error: msg });
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 250 * failures));
+          continue;
         }
         frames++;
         const now = performance.now();
@@ -143,7 +155,9 @@ export default function App() {
     setSaveState(ok ? 'saved' : 'failed');
   };
 
-  const customWaveStatus = ((): Parameters<typeof LightingPanel>[0]['customWave'] => {
+  const isStillImageSave = lighting.effect === 'customWave' && !!kb.device?.canStorePerKey;
+
+  const customWaveStatus =((): Parameters<typeof LightingPanel>[0]['customWave'] => {
     if (kb.status !== 'connected') return { tone: 'info', note: 'Preview only. Connect the keyboard to run this wave on it.' };
     if (!canStream) return { tone: 'warn', note: "This keyboard can't show app-rendered waves, so this is a preview only." };
     if (!liveSync) return { tone: 'info', note: 'Live sync is off (Device tab), so the wave only runs in the preview.' };
@@ -151,9 +165,13 @@ export default function App() {
     return {
       tone: 'ok',
       note:
-        `Running live on your keyboard${stream.fps ? ` (~${stream.fps} fps)` : ''}. It only runs while this page is open; ` +
-        'afterwards the keyboard goes back to its saved effect.' +
-        (kb.device?.canStorePerKey ? ' Press Save to keep a still image of the gradient on the keyboard.' : ''),
+        `Running live on your keyboard${stream.fps ? ` (~${stream.fps} fps)` : ''}. The keyboard can't animate a ` +
+        "custom gradient by itself, so the wave only flows while this app is open. When you close it, the keyboard " +
+        'shows its saved lighting.' +
+        (kb.device?.canStorePerKey
+          ? ' "Save still image" makes that a frozen snapshot of this gradient. For a wave that keeps moving without ' +
+            'the app, use the Wave effect (rainbow or one colour) and save that.'
+          : ''),
     };
   })();
 
@@ -185,8 +203,8 @@ export default function App() {
               onClick={() => void save()}
               disabled={saveState === 'saving'}
               title={
-                lighting.effect === 'customWave'
-                  ? 'Stores a still image of the gradient on the keyboard'
+                isStillImageSave
+                  ? 'The keyboard cannot animate a custom gradient by itself: this stores a frozen snapshot it shows when the app is closed. The wave keeps flowing while the app is open.'
                   : 'Writes the current lighting to the keyboard'
               }
               className={cx('min-w-32', saveState === 'failed' && 'text-rose-600 dark:text-rose-300')}
@@ -207,7 +225,7 @@ export default function App() {
                     <path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3Z" />
                     <path d="M8 3v5h7V3M8 21v-7h8v7" />
                   </svg>
-                  Save to keyboard
+                  {isStillImageSave ? 'Save still image' : 'Save to keyboard'}
                 </>
               )}
             </Button>

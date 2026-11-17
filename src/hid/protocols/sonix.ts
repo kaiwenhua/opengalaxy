@@ -107,6 +107,11 @@ export const PACKET_DELAY_MS = 35;
 /** Live frames use the vendor's music-mode timing. */
 const LIVE_HEADER_DELAY_MS = 5;
 const LIVE_DATA_DELAY_MS = 2;
+/** Readback polling while the keyboard is busy: up to ~0.4 s before reporting a missing ACK. */
+const ACK_ATTEMPTS = 20;
+const ACK_RETRY_MS = 20;
+/** Pause after a stored session (flash write) before sending anything else. */
+const FLASH_SETTLE_MS = 300;
 const LEVEL_MAX = 5;
 
 const toLevel = (pct: number) => Math.round((Math.min(100, Math.max(0, pct)) / 100) * LEVEL_MAX);
@@ -229,6 +234,8 @@ export class SonixGalaxyProtocol implements LightingProtocol {
     await this.sendChunks(data, PACKET_DELAY_MS);
     await this.headerWithAck(header(CMD.APPLY));
     await this.set(header(CMD.FINALIZE));
+    // Applying a session stores it in flash; give the keyboard time before the next command.
+    await sleep(FLASH_SETTLE_MS);
   }
 
   private async sendChunks(data: Uint8Array, delay: number) {
@@ -240,19 +247,28 @@ export class SonixGalaxyProtocol implements LightingProtocol {
     await sleep(delay);
   }
 
-  /** Sends a header, then reads the feature report back. The firmware ignores later packets without this. */
+  /**
+   * Sends a header, then reads the feature report back. The firmware ignores later packets
+   * without this. While the keyboard is busy (e.g. still writing flash after a save) the
+   * readback can return the previous reply, so it is polled a few times before giving up.
+   */
   private async headerWithAck(packet: Uint8Array, delay = PACKET_DELAY_MS) {
     await this.set(packet, delay);
-    let res = await this.transport.raw({ kind: 'feature-get', reportId: 0 });
-    if (!res) throw new ProtocolError('No readback from keyboard');
-    // Some platforms prefix the (zero) report ID byte.
-    if (res.length > 64 && res[0] === 0) res = res.subarray(1);
-    if (res[0] !== packet[0] || res[1] !== packet[1]) {
-      const got = Array.from(res.subarray(0, 4), (b) => b.toString(16).padStart(2, '0')).join(' ');
-      throw new ProtocolError(
-        `Keyboard did not acknowledge 04 ${packet[1]!.toString(16).padStart(2, '0')} (got ${got})`,
-      );
+    let got = '';
+    for (let attempt = 0; attempt < ACK_ATTEMPTS; attempt++) {
+      if (attempt > 0) await sleep(ACK_RETRY_MS);
+      let res = await this.transport.raw({ kind: 'feature-get', reportId: 0 });
+      if (!res) throw new ProtocolError('No readback from keyboard');
+      // Some platforms prefix the (zero) report ID byte.
+      if (res.length > 64 && res[0] === 0) res = res.subarray(1);
+      if (res[0] === packet[0] && res[1] === packet[1]) {
+        await sleep(delay);
+        return;
+      }
+      got = Array.from(res.subarray(0, 4), (b) => b.toString(16).padStart(2, '0')).join(' ');
     }
-    await sleep(delay);
+    throw new ProtocolError(
+      `Keyboard did not acknowledge 04 ${packet[1]!.toString(16).padStart(2, '0')} (got ${got})`,
+    );
   }
 }
