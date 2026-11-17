@@ -74,11 +74,13 @@ npm run desktop        # → release/OpenGalaxy.exe (~7 MB, needs the Go toolcha
    it its own window with no tabs or address bar,
 3. exits by itself a few seconds after the window is closed.
 
-**Custom wave + desktop app:** the Galaxy80 can't animate a custom gradient by itself, and it ignores
-live frames while it shows a stored still image. So the app streams the wave while its window is open,
-and when you close the window the launcher stores a still image of the gradient on the keyboard,
-using native HID (`desktop/hid_windows.go`). The page hands it the exact packets beforehand, so the
-protocol logic stays in one place. Problems end up in `%LOCALAPPDATA%\OpenGalaxy\launcher.log`.
+**Custom wave + desktop app:** the Galaxy80 can't store or animate a custom gradient by itself. So the
+wave keeps running even when you close the window: the launcher stays in the background with a tray
+icon and keeps rendering and sending the frames itself through native HID (`desktop/render.go`,
+`desktop/stream_windows.go`). The renderer is a port of the app's and is tested against it. Tray menu:
+**Open OpenGalaxy** (the window takes the wave over again) or **Stop wave and quit**, which leaves a
+still image of the gradient on the keyboard. Other effects are stored by the keyboard itself, so with
+those the app simply exits on close. Problems end up in `%LOCALAPPDATA%\OpenGalaxy\launcher.log`.
 
 Settings and the keyboard permission live in a dedicated browser profile under
 `%LOCALAPPDATA%\OpenGalaxy`. For a fully portable setup (e.g. a USB stick), create a folder named

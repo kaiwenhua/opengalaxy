@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -16,6 +15,7 @@ const (
 	heartbeatPath = "/__opengalaxy/heartbeat"
 	byePath       = "/__opengalaxy/bye"
 	onExitPath    = "/__opengalaxy/on-exit"
+	wavePath      = "/__opengalaxy/background"
 	quitPath      = "/__opengalaxy/quit"
 	// Custom header for quit: browsers can't send it cross-site without a CORS preflight
 	// (which this server never approves), so only local programs like a newer launcher can.
@@ -84,15 +84,25 @@ func newHandler(site fs.FS, port int, life *lifecycle) http.Handler {
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
-		case onExitPath:
-			// Only the app's own page may hand over packets: same origin and JSON
+		case onExitPath, wavePath:
+			// Only the app's own page may hand over packets or a wave: same origin and JSON
 			// (cross-site "simple" requests can't send application/json without CORS).
 			if r.Method != http.MethodPost || r.Header.Get("Origin") != origin ||
 				!strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			handlePlan(w, r, life)
+			if r.URL.Path == onExitPath {
+				handlePlan(w, r, life)
+				return
+			}
+			wave, err := parseWaveSpec(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			life.setWave(wave)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		case quitPath:
 			if r.Method != http.MethodPost || r.Header.Get(quitHeader) != "1" || r.Header.Get("Origin") != "" {
@@ -101,7 +111,7 @@ func newHandler(site fs.FS, port int, life *lifecycle) http.Handler {
 			}
 			logf("quit requested by a newer launcher")
 			w.WriteHeader(http.StatusNoContent)
-			go life.stop()
+			go life.requestQuit()
 			return
 		}
 
@@ -138,97 +148,4 @@ func serveFile(w http.ResponseWriter, r *http.Request, site fs.FS) {
 		return
 	}
 	_, _ = w.Write(data)
-}
-
-// lifecycle decides when the launcher should exit.
-type lifecycle struct {
-	mu       sync.Mutex
-	started  time.Time
-	lastBeat time.Time
-	byeAt    time.Time
-	exitedAt time.Time
-	plan     *exitPlan
-	done     chan struct{}
-	once     sync.Once
-}
-
-func (l *lifecycle) setPlan(p *exitPlan) {
-	l.mu.Lock()
-	had := l.plan != nil
-	l.plan = p
-	l.mu.Unlock()
-	switch {
-	case p != nil && !had:
-		logf("exit plan received (%d steps)", len(p.Steps))
-	case p == nil && had:
-		logf("exit plan cleared")
-	}
-}
-
-func (l *lifecycle) takePlan() *exitPlan {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	p := l.plan
-	l.plan = nil
-	return p
-}
-
-func newLifecycle() *lifecycle {
-	l := &lifecycle{started: time.Now(), done: make(chan struct{})}
-	go l.watch()
-	return l
-}
-
-func (l *lifecycle) heartbeat() {
-	l.mu.Lock()
-	l.lastBeat = time.Now()
-	l.mu.Unlock()
-}
-
-func (l *lifecycle) bye() {
-	l.mu.Lock()
-	l.byeAt = time.Now()
-	l.mu.Unlock()
-}
-
-func (l *lifecycle) browserExited() {
-	l.mu.Lock()
-	l.exitedAt = time.Now()
-	l.mu.Unlock()
-}
-
-func (l *lifecycle) stop() { l.once.Do(func() { close(l.done) }) }
-func (l *lifecycle) wait() { <-l.done }
-
-func (l *lifecycle) watch() {
-	t := time.NewTicker(time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-l.done:
-			return
-		case now := <-t.C:
-			if l.shouldExit(now) {
-				l.stop()
-				return
-			}
-		}
-	}
-}
-
-func (l *lifecycle) shouldExit(now time.Time) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	seen := !l.lastBeat.IsZero()
-	switch {
-	case !seen && now.Sub(l.started) > firstLoadTimeout:
-		return true // the window never loaded
-	case seen && now.Sub(l.lastBeat) > silenceTimeout:
-		return true // window gone without saying goodbye
-	case !l.byeAt.IsZero() && l.lastBeat.Before(l.byeAt) && now.Sub(l.byeAt) > byeGrace:
-		return true // closed (a reload would have sent a new heartbeat by now)
-	case !l.exitedAt.IsZero() && now.Sub(l.exitedAt) > exitedGrace && (!seen || now.Sub(l.lastBeat) > exitedGrace):
-		return true // our browser process ended and no window is talking to us
-	}
-	return false
 }

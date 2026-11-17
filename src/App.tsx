@@ -10,7 +10,7 @@ import { Button, Tabs, cx } from './components/ui';
 import { KeyboardController, keyboard } from './hid/KeyboardController';
 import { usesSingleColor, type LightingState } from './hid/types';
 import { hexToRgb, rgbToHsv } from './lib/color';
-import { setExitPlan, useDesktopLauncher } from './lib/desktop';
+import { backgroundWaveSpec, setBackgroundWave, setExitPlan, useDesktopLauncher } from './lib/desktop';
 import { sortStops } from './lib/gradient';
 import { useSettings, type TabId } from './state/settings';
 import { useKeyboard } from './state/useKeyboard';
@@ -150,13 +150,22 @@ export default function App() {
     };
   }, [streamActive]);
 
-  // Desktop app: keep the launcher's exit plan current, so closing the window stores a
-  // still image of the gradient on the keyboard. Cleared as soon as the wave stops.
+  // Desktop app: keep the launcher up to date, so that when the window closes it
+  //  - keeps the Custom wave running in the background (it streams the frames itself), and
+  //  - stores a still image of the gradient when that background wave is finally stopped.
+  // Both are cleared as soon as the wave stops here.
   const exitPlanWanted = desktop && streamActive && canStoreStill;
-  const stillKey = JSON.stringify([lighting.gradient, lighting.direction, lighting.waveLength, lighting.brightness]);
+  const stillKey = JSON.stringify([
+    lighting.gradient,
+    lighting.direction,
+    lighting.waveLength,
+    lighting.brightness,
+    lighting.speed,
+  ]);
   useEffect(() => {
     if (!exitPlanWanted) {
       void setExitPlan(null);
+      void setBackgroundWave(null);
       return;
     }
     const t = setTimeout(async () => {
@@ -164,6 +173,7 @@ export default function App() {
       const frame = renderFrame(KEYS, { ...l, brightness: 100 }, 0, []);
       const plan = await keyboard.stillImagePlan(frameToLeds(KEYS, frame), l.brightness);
       await setExitPlan(plan);
+      if (plan) await setBackgroundWave(backgroundWaveSpec(plan, l));
     }, 800);
     return () => clearTimeout(t);
   }, [exitPlanWanted, stillKey]);

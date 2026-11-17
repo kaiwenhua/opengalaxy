@@ -18,7 +18,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"time"
 )
 
@@ -97,7 +100,7 @@ func run() error {
 	}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			life.stop()
+			life.requestQuit()
 		}
 	}()
 
@@ -105,9 +108,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	cmd := browserCommand(browser, appURL(port), profile)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("could not start %s: %w", filepath.Base(browser), err)
+	openWindow := func() *exec.Cmd {
+		cmd := browserCommand(browser, appURL(port), profile)
+		if err := cmd.Start(); err != nil {
+			logf("could not start %s: %v", filepath.Base(browser), err)
+			return nil
+		}
+		return cmd
+	}
+	cmd := openWindow()
+	if cmd == nil {
+		return fmt.Errorf("could not start %s", filepath.Base(browser))
 	}
 	browserDone := make(chan struct{})
 	go func() {
@@ -116,13 +127,27 @@ func run() error {
 		life.browserExited()
 	}()
 
-	life.wait()
-
-	// Close the dedicated browser instance too, in case it keeps running in the background.
-	select {
-	case <-browserDone:
-	default:
-		_ = cmd.Process.Kill()
+	session, ownBrowser := time.Now(), true
+	for {
+		if !life.waitWindowGone(session, ownBrowser) {
+			break // quit requested
+		}
+		// Close the dedicated browser instance too, in case it keeps running in the background.
+		select {
+		case <-browserDone:
+		default:
+			_ = cmd.Process.Kill()
+		}
+		wave := life.currentWave()
+		if wave == nil || runtime.GOOS != "windows" {
+			break
+		}
+		// Custom wave: the keyboard can't animate it by itself, so keep it running from here.
+		if !runInBackground(wave, life, openWindow) {
+			break // "Stop wave and quit"
+		}
+		// The window was reopened and took over; wait for it to go away again.
+		session, ownBrowser = time.Now(), false
 	}
 	_ = srv.Close()
 
@@ -139,6 +164,56 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+// runInBackground keeps the Custom wave running with a tray icon until the user either
+// reopens the window (returns true: the page takes over streaming) or picks "Stop wave and
+// quit" (returns false).
+func runInBackground(wave *waveSpec, life *lifecycle, openWindow func() *exec.Cmd) bool {
+	logf("window closed: Custom wave continues in the background")
+	stop := make(chan struct{})
+	streamDone := make(chan struct{})
+	go func() {
+		streamWave(wave, stop)
+		close(streamDone)
+	}()
+	quit := make(chan struct{})
+	var quitOnce sync.Once
+	t := showTray(
+		"OpenGalaxy – Custom wave running",
+		"Your Custom wave keeps running",
+		"OpenGalaxy stays in the background so the wave keeps moving. Right-click the tray icon to open it or to stop.",
+		func() { go openWindow() },
+		func() { quitOnce.Do(func() { close(quit) }) },
+	)
+	since := time.Now()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	reopened := false
+loop:
+	for {
+		select {
+		case <-quit:
+			break loop
+		case <-life.quit:
+			break loop
+		case <-ticker.C:
+			// A page checked in again (tray "Open" or the exe started again): hand over.
+			if life.windowOpened(since) {
+				reopened = true
+				break loop
+			}
+		}
+	}
+	close(stop)
+	<-streamDone
+	t.close()
+	if reopened {
+		logf("window reopened: it takes over the Custom wave")
+	} else {
+		logf("background wave stopped by the user")
+	}
+	return reopened
 }
 
 // logf appends a line to %LOCALAPPDATA%\OpenGalaxy\launcher.log (kept small) for
