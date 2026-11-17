@@ -77,10 +77,14 @@ func newHandler(site fs.FS, port int, life *lifecycle) http.Handler {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
+			page := r.URL.Query().Get("page")
+			if len(page) > 64 {
+				page = page[:64]
+			}
 			if r.URL.Path == heartbeatPath {
-				life.heartbeat()
+				life.heartbeat(page)
 			} else {
-				life.bye()
+				life.bye(page)
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return

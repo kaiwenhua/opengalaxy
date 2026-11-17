@@ -43,8 +43,11 @@ export async function connectToDesktopLauncher(): Promise<boolean> {
   present = true;
   listeners.forEach((fn) => fn());
 
+  // Each window identifies itself, so the launcher only treats the app as closed once the
+  // last window has said goodbye (not when one of several windows closes).
+  const pageId = crypto.randomUUID();
   const beat = () => {
-    void fetch(HEARTBEAT, { method: 'POST', keepalive: true }).catch(() => undefined);
+    void fetch(`${HEARTBEAT}?page=${pageId}`, { method: 'POST', keepalive: true }).catch(() => undefined);
   };
   beat();
   setInterval(beat, INTERVAL_MS);
@@ -53,7 +56,7 @@ export async function connectToDesktopLauncher(): Promise<boolean> {
     if (document.visibilityState === 'visible') beat();
   });
   window.addEventListener('pagehide', () => {
-    navigator.sendBeacon(BYE);
+    navigator.sendBeacon(`${BYE}?page=${pageId}`);
   });
   return true;
 }

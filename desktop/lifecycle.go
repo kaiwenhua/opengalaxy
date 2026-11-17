@@ -12,6 +12,9 @@ type lifecycle struct {
 	started  time.Time
 	lastBeat time.Time
 	byeAt    time.Time
+	// Open windows by page id → last heartbeat. A window is removed when it says goodbye,
+	// so closing one of several windows doesn't count as closing the app.
+	pages    map[string]time.Time
 	exitedAt time.Time
 	plan     *exitPlan
 	wave     *waveSpec
@@ -20,19 +23,37 @@ type lifecycle struct {
 }
 
 func newLifecycle() *lifecycle {
-	return &lifecycle{started: time.Now(), quit: make(chan struct{})}
+	return &lifecycle{started: time.Now(), quit: make(chan struct{}), pages: map[string]time.Time{}}
 }
 
-func (l *lifecycle) heartbeat() {
+func (l *lifecycle) heartbeat(page string) {
 	l.mu.Lock()
-	l.lastBeat = time.Now()
+	now := time.Now()
+	l.lastBeat = now
+	l.pages[page] = now
 	l.mu.Unlock()
 }
 
-func (l *lifecycle) bye() {
+func (l *lifecycle) bye(page string) {
 	l.mu.Lock()
 	l.byeAt = time.Now()
+	delete(l.pages, page)
 	l.mu.Unlock()
+}
+
+// openPages counts windows that checked in after `since` and haven't gone silent.
+// Caller holds l.mu.
+func (l *lifecycle) openPages(since, now time.Time) int {
+	n := 0
+	for id, t := range l.pages {
+		switch {
+		case now.Sub(t) > silenceTimeout:
+			delete(l.pages, id) // crashed or killed without saying goodbye
+		case !t.Before(since):
+			n++
+		}
+	}
+	return n
 }
 
 func (l *lifecycle) browserExited() {
@@ -84,19 +105,18 @@ func (l *lifecycle) currentWave() *waveSpec {
 	return l.wave
 }
 
-// windowGone reports whether the app window that was open since `since` has gone away:
-// it said goodbye and no heartbeat followed (a reload sends one), it went silent, it never
+// windowGone reports whether all app windows open since `since` have gone away: each said
+// goodbye (a reload checks in again within the grace period) or went silent, none ever
 // loaded, or the browser process we started has ended.
 func (l *lifecycle) windowGone(since, now time.Time, ownBrowser bool) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	seen := l.lastBeat.After(since)
+	seen := !l.lastBeat.IsZero() && !l.lastBeat.Before(since)
+	open := l.openPages(since, now)
 	switch {
 	case !seen && now.Sub(since) > firstLoadTimeout:
 		return true
-	case seen && l.byeAt.After(l.lastBeat) && now.Sub(l.byeAt) > byeGrace:
-		return true
-	case seen && now.Sub(l.lastBeat) > silenceTimeout:
+	case seen && open == 0 && now.Sub(l.byeAt) > byeGrace:
 		return true
 	case ownBrowser && !l.exitedAt.IsZero() && now.Sub(l.exitedAt) > exitedGrace &&
 		(!seen || now.Sub(l.lastBeat) > exitedGrace):
