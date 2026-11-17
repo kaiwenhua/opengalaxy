@@ -238,11 +238,18 @@ export default function App() {
     <div className="mx-auto max-w-6xl px-4 pt-6 pb-16 sm:px-8 sm:pt-8">
       <Header kb={kb} theme={theme} onThemeChange={(t) => update({ theme: t })} />
 
-      <Banners kb={kb} desktop={desktop} />
+      <Banners kb={kb} />
 
       <section className="mt-8 sm:mt-10">
         <div className="mx-auto max-w-5xl">
-          <KeyboardPreview lighting={lighting} />
+          <KeyboardPreview
+            lighting={lighting}
+            overlay={
+              kb.status !== 'connected' && KeyboardController.isWebHidSupported ? (
+                <ConnectPrompt connecting={kb.status === 'connecting'} desktop={desktop} />
+              ) : undefined
+            }
+          />
         </div>
         <p className="mt-10 text-center text-xs text-ink-400">
           {kb.status === 'connected'
@@ -331,7 +338,29 @@ export default function App() {
   );
 }
 
-function Banners({ kb, desktop }: { kb: ReturnType<typeof useKeyboard>; desktop: boolean }) {
+/** Shown on top of the keyboard preview while no keyboard is connected. */
+function ConnectPrompt({ connecting, desktop }: { connecting: boolean; desktop: boolean }) {
+  return (
+    <div className="max-w-sm rounded-2xl border border-white/10 bg-[#111118]/95 p-5 text-center shadow-2xl">
+      <div className="text-base font-semibold text-white">Keyboard not connected</div>
+      <p className="mt-1.5 text-sm text-white/70">
+        Changes only show here in the preview until you connect your Galaxy80.
+        {desktop && ' The desktop app needs this once; after that it reconnects by itself.'}
+      </p>
+      <Button
+        variant="primary"
+        className="mt-4 w-full"
+        disabled={connecting}
+        onClick={() => void keyboard.connect()}
+      >
+        {connecting ? 'Connecting…' : 'Connect Galaxy80'}
+      </Button>
+      <p className="mt-2 text-xs text-white/50">Pick “Galaxy80” in the list that opens, then “Connect”.</p>
+    </div>
+  );
+}
+
+function Banners({ kb }: { kb: ReturnType<typeof useKeyboard> }) {
   const items: { tone: 'warn' | 'error' | 'info'; text: string }[] = [];
   if (!KeyboardController.isWebHidSupported) {
     // Browsers only expose WebHID on secure origins (HTTPS or localhost).
@@ -347,13 +376,6 @@ function Banners({ kb, desktop }: { kb: ReturnType<typeof useKeyboard>; desktop:
     items.push({
       tone: 'warn',
       text: `Connected in raw mode — lighting changes stay in the preview for now. ${kb.device?.protocolNote ?? ''}`.trim(),
-    });
-  if (desktop && kb.status === 'disconnected')
-    items.push({
-      tone: 'warn',
-      text:
-        'The keyboard is not connected in this window yet. The desktop app has its own browser profile, so click ' +
-        '"Connect" (top right) once and pick the Galaxy80. After that it reconnects automatically on every start.',
     });
   if (kb.error) items.push({ tone: 'error', text: kb.error });
   if (!items.length) return null;

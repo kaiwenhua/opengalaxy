@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { LightingState } from '../../hid/types';
 import { renderFrame, type Hit } from './effects';
 import { BOARD_H, BOARD_W, KEYS } from './layout';
@@ -10,7 +10,7 @@ const codeToIndex = new Map(KEYS.map((k, i) => [k.code, i]));
  * CSS variable per key (no React re-render per frame). Typing on your real keyboard
  * or clicking keys triggers the reactive / ripple effects.
  */
-export function KeyboardPreview({ lighting }: { lighting: LightingState }) {
+export function KeyboardPreview({ lighting, overlay }: { lighting: LightingState; overlay?: ReactNode }) {
   const keyEls = useRef<(HTMLDivElement | null)[]>([]);
   const glowEl = useRef<HTMLDivElement | null>(null);
   const lightingRef = useRef(lighting);
@@ -104,6 +104,11 @@ export function KeyboardPreview({ lighting }: { lighting: LightingState }) {
           </div>
         </div>
       </div>
+      {overlay && (
+        <div className="absolute inset-0 z-10 grid place-items-center rounded-[1.4rem] bg-black/45 p-4 backdrop-blur-[2px]">
+          {overlay}
+        </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,24 @@ import type { CollectionInfo, RawOp, ReportInfo, RequestOptions, Tap, Transport 
 
 const DEFAULT_REPORT_SIZE = 32;
 
+/**
+ * A feature report normally completes in a few milliseconds. If one never settles (e.g. while
+ * another program such as the vendor driver talks to the keyboard), fail it instead of letting
+ * it block every later command in the queue.
+ */
+const FEATURE_TIMEOUT_MS = 2000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} timed out. Is another program (e.g. the VTER driver) using it?`)),
+      ms,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 interface Waiter {
   match: (r: Uint8Array) => boolean;
   resolve: (r: Uint8Array) => void;
@@ -99,11 +117,15 @@ export class HidTransport implements Transport {
         case 'feature-set': {
           const report = this.pad(op.data, this.sizeOf('feature', op.reportId));
           this.tap?.('tx', report);
-          await this.device.sendFeatureReport(op.reportId, report);
+          await withTimeout(this.device.sendFeatureReport(op.reportId, report), FEATURE_TIMEOUT_MS, 'Sending to the keyboard');
           return null;
         }
         case 'feature-get': {
-          const view = await this.device.receiveFeatureReport(op.reportId);
+          const view = await withTimeout(
+            this.device.receiveFeatureReport(op.reportId),
+            FEATURE_TIMEOUT_MS,
+            'Reading from the keyboard',
+          );
           const data = new Uint8Array(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength));
           this.tap?.('rx', data);
           return data;
