@@ -186,6 +186,29 @@ export interface LightingProtocol {
   sendLiveFrame?(leds: LedColor[]): Promise<void>;
   /** Optional: store a static per-key colour map on the keyboard. `brightness` is 0–100. */
   writePerKey?(leds: LedColor[], brightness: number): Promise<void>;
+  /** Optional: put the keyboard into a mode where live frames are visible. */
+  prepareLive?(state: LightingState): Promise<void>;
+  /** Optional: the packets writePerKey would send, for replay by the desktop launcher. */
+  planPerKey?(leds: LedColor[], brightness: number): Promise<PlanStep[]>;
+}
+
+/**
+ * One step of a recorded packet sequence (64-byte feature reports, report ID 0).
+ * 'get' reads the reply and waits until it echoes the previous 'set' (bytes 0–1).
+ */
+export interface PlanStep {
+  op: 'set' | 'get';
+  data?: number[];
+  /** Pause after this step. */
+  delayMs: number;
+}
+
+/** A packet sequence plus the HID interface it is meant for. */
+export interface DevicePlan {
+  vendorId: number;
+  productId: number;
+  usagePage: number;
+  steps: PlanStep[];
 }
 
 export class ProtocolError extends Error {

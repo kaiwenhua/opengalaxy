@@ -7,8 +7,7 @@ import { Button, SectionTitle, cx } from './ui';
 export interface CustomWaveStatus {
   note: string;
   tone: 'ok' | 'warn' | 'info';
-  onStore?: () => void;
-  storing?: boolean;
+  action?: { label: string; onClick: () => void };
 }
 
 const QUICK_GRADIENTS: { name: string; stops: GradientStop[] }[] = [
@@ -245,9 +244,9 @@ export function GradientEditor({
         )}
       >
         {status.note}
-        {status.onStore && (
-          <Button className="mt-3 h-8 w-full text-xs" onClick={status.onStore} disabled={status.storing}>
-            {status.storing ? 'Saving to keyboard…' : 'Save current frame to keyboard (static)'}
+        {status.action && (
+          <Button className="mt-3 h-8 w-full text-xs" onClick={status.action.onClick}>
+            {status.action.label}
           </Button>
         )}
       </div>

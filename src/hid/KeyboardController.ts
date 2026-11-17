@@ -4,6 +4,7 @@ import { HidTransport } from './HidTransport';
 import { MockViaKeyboard } from './MockViaKeyboard';
 import type {
   DeviceInfo,
+  DevicePlan,
   LedColor,
   LightingKey,
   LightingProtocol,
@@ -343,6 +344,28 @@ export class KeyboardController {
         this.quiet = false;
       }
     });
+  }
+
+  /** Puts the keyboard into a mode where live frames are visible (before streaming). */
+  async prepareLive(state: LightingState): Promise<void> {
+    const protocol = this.protocol;
+    if (!protocol?.prepareLive) return;
+    await this.flushing;
+    await this.exclusive(() => protocol.prepareLive!(state));
+    this.lastSent = null; // the firmware effect changed behind the coalescer's back
+  }
+
+  /**
+   * The packets that would store `leds` as a still image, plus the HID interface they
+   * belong to. Nothing is sent. Used by the desktop launcher on close.
+   */
+  async stillImagePlan(leds: LedColor[], brightness: number): Promise<DevicePlan | null> {
+    const protocol = this.protocol;
+    const t = this.transport;
+    if (!protocol?.planPerKey || !t || t.isMock) return null;
+    const usagePage = t.collections.find((c) => c.usagePage >= 0xff00 && c.feature.length > 0)?.usagePage;
+    if (usagePage === undefined) return null;
+    return { vendorId: t.vendorId, productId: t.productId, usagePage, steps: await protocol.planPerKey(leds, brightness) };
   }
 
   /** Stores a static per-key colour map on the keyboard. */

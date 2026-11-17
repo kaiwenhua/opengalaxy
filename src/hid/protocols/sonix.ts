@@ -4,6 +4,7 @@ import {
   type EffectId,
   type LedColor,
   type LightingProtocol,
+  type PlanStep,
   type LightingState,
   type Transport,
 } from '../types';
@@ -176,7 +177,56 @@ export class SonixGalaxyProtocol implements LightingProtocol {
   readonly persistsAutomatically = true;
   readonly canReadBack = false;
 
-  constructor(private readonly transport: Transport) {}
+  constructor(
+    private readonly transport: Transport,
+    /** Injectable pause, so a packet sequence can be recorded without real delays. */
+    private readonly wait: (ms: number) => Promise<unknown> = sleep,
+  ) {}
+
+  /**
+   * Live frames are only drawn while the keyboard runs a normal effect: in per-key
+   * ("still image") mode the firmware shows the stored image and ignores them. So before
+   * streaming, switch to a plain static effect in the gradient's first colour. That is also
+   * what the keyboard falls back to if the app ends without storing a still image.
+   */
+  async prepareLive(state: LightingState) {
+    const first = [...state.gradient].sort((a, b) => a.pos - b.pos)[0]?.color ?? state.color;
+    await this.writeLighting({ ...state, effect: 'static', color: first });
+  }
+
+  /**
+   * The exact packets that store a still image, without sending them. The desktop
+   * launcher replays these when the app window closes.
+   */
+  async planPerKey(leds: LedColor[], brightness: number): Promise<PlanStep[]> {
+    const steps: PlanStep[] = [];
+    let last = new Uint8Array(64);
+    const recorder: Transport = {
+      ...this.transport,
+      tap: null,
+      raw: async (op) => {
+        if (op.kind === 'feature-set') {
+          last = new Uint8Array(64);
+          last.set(op.data.subarray(0, 64));
+          steps.push({ op: 'set', data: Array.from(op.data.subarray(0, 64)), delayMs: 0 });
+          return null;
+        }
+        if (op.kind === 'feature-get') {
+          steps.push({ op: 'get', delayMs: 0 });
+          const echo = last.slice();
+          echo[3] = 1;
+          return echo;
+        }
+        return null;
+      },
+    };
+    const record = new SonixGalaxyProtocol(recorder, async (ms) => {
+      const step = steps[steps.length - 1];
+      if (step) step.delayMs += ms;
+    });
+    await record.writePerKey(leds, brightness);
+    return steps;
+  }
 
   /**
    * Passive check only: confirms the interface has 64-byte feature reports. We don't
@@ -235,7 +285,7 @@ export class SonixGalaxyProtocol implements LightingProtocol {
     await this.headerWithAck(header(CMD.APPLY));
     await this.set(header(CMD.FINALIZE));
     // Applying a session stores it in flash; give the keyboard time before the next command.
-    await sleep(FLASH_SETTLE_MS);
+    await this.wait(FLASH_SETTLE_MS);
   }
 
   private async sendChunks(data: Uint8Array, delay: number) {
@@ -244,7 +294,7 @@ export class SonixGalaxyProtocol implements LightingProtocol {
 
   private async set(data: Uint8Array, delay = PACKET_DELAY_MS) {
     await this.transport.raw({ kind: 'feature-set', reportId: 0, data });
-    await sleep(delay);
+    await this.wait(delay);
   }
 
   /**
@@ -256,13 +306,13 @@ export class SonixGalaxyProtocol implements LightingProtocol {
     await this.set(packet, delay);
     let got = '';
     for (let attempt = 0; attempt < ACK_ATTEMPTS; attempt++) {
-      if (attempt > 0) await sleep(ACK_RETRY_MS);
+      if (attempt > 0) await this.wait(ACK_RETRY_MS);
       let res = await this.transport.raw({ kind: 'feature-get', reportId: 0 });
       if (!res) throw new ProtocolError('No readback from keyboard');
       // Some platforms prefix the (zero) report ID byte.
       if (res.length > 64 && res[0] === 0) res = res.subarray(1);
       if (res[0] === packet[0] && res[1] === packet[1]) {
-        await sleep(delay);
+        await this.wait(delay);
         return;
       }
       got = Array.from(res.subarray(0, 4), (b) => b.toString(16).padStart(2, '0')).join(' ');

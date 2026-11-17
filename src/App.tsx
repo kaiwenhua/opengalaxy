@@ -10,6 +10,7 @@ import { Button, Tabs, cx } from './components/ui';
 import { KeyboardController, keyboard } from './hid/KeyboardController';
 import { usesSingleColor, type LightingState } from './hid/types';
 import { hexToRgb, rgbToHsv } from './lib/color';
+import { setExitPlan, useDesktopLauncher } from './lib/desktop';
 import { sortStops } from './lib/gradient';
 import { useSettings, type TabId } from './state/settings';
 import { useKeyboard } from './state/useKeyboard';
@@ -82,8 +83,16 @@ export default function App() {
   // Custom wave: render frames here and stream them to the keyboard while the page is open.
   const lightingRef = useRef(lighting);
   lightingRef.current = lighting;
+  const desktop = useDesktopLauncher();
   const canStream = canSync && !!kb.device?.canStream;
-  const streamActive = canStream && liveSync && lighting.effect === 'customWave';
+  const canStoreStill = !!kb.device?.canStorePerKey;
+  // Browser only: after "Save still image" the wave is paused, because the keyboard shows
+  // either its stored still image or live frames, never both.
+  const [stillPaused, setStillPaused] = useState(false);
+  useEffect(() => {
+    if (lighting.effect !== 'customWave') setStillPaused(false);
+  }, [lighting.effect]);
+  const streamActive = canStream && liveSync && lighting.effect === 'customWave' && !stillPaused;
   const [stream, setStream] = useState<{ fps: number | null; error: string | null }>({ fps: null, error: null });
 
   useEffect(() => {
@@ -92,6 +101,13 @@ export default function App() {
     setStream({ fps: null, error: null });
     keyboard.note('Custom wave: live streaming started');
     void (async () => {
+      // Live frames are ignored while the keyboard shows a stored still image:
+      // switch it to a normal effect first.
+      try {
+        await keyboard.prepareLive(lightingRef.current);
+      } catch (e) {
+        keyboard.note(`Could not prepare live mode: ${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
       let frames = 0;
       let windowStart = performance.now();
       let failures = 0;
@@ -133,6 +149,24 @@ export default function App() {
     };
   }, [streamActive]);
 
+  // Desktop app: keep the launcher's exit plan current, so closing the window stores a
+  // still image of the gradient on the keyboard. Cleared as soon as the wave stops.
+  const exitPlanWanted = desktop && streamActive && canStoreStill;
+  const stillKey = JSON.stringify([lighting.gradient, lighting.direction, lighting.waveLength, lighting.brightness]);
+  useEffect(() => {
+    if (!exitPlanWanted) {
+      void setExitPlan(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      const l = lightingRef.current;
+      const frame = renderFrame(KEYS, { ...l, brightness: 100 }, 0, []);
+      const plan = await keyboard.stillImagePlan(frameToLeds(KEYS, frame), l.brightness);
+      await setExitPlan(plan);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [exitPlanWanted, stillKey]);
+
   // Save button: writes the full lighting to the keyboard and keeps it after the app closes.
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   useEffect(() => {
@@ -144,33 +178,57 @@ export default function App() {
   const save = async () => {
     setSaveState('saving');
     let ok: boolean;
-    if (lighting.effect === 'customWave' && kb.device?.canStorePerKey) {
+    if (lighting.effect === 'customWave' && canStoreStill) {
       // The keyboard can't animate a custom gradient by itself: store a still frame.
       // Colours at full intensity; the keyboard applies the brightness level itself.
+      // Pause the stream first: the keyboard ignores live frames in still-image mode.
+      setStillPaused(true);
       const frame = renderFrame(KEYS, { ...lighting, brightness: 100 }, 0, []);
       ok = await keyboard.storePerKey(frameToLeds(KEYS, frame), lighting.brightness);
+      if (!ok) setStillPaused(false);
     } else {
       ok = await keyboard.saveLighting(lighting);
     }
     setSaveState(ok ? 'saved' : 'failed');
   };
 
-  const isStillImageSave = lighting.effect === 'customWave' && !!kb.device?.canStorePerKey;
+  const isStillImageSave = lighting.effect === 'customWave' && canStoreStill;
+  // In the desktop app the still image is stored automatically on close, so no button.
+  const showSaveButton = canSync && !(isStillImageSave && desktop);
 
-  const customWaveStatus =((): Parameters<typeof LightingPanel>[0]['customWave'] => {
+  const customWaveStatus = ((): Parameters<typeof LightingPanel>[0]['customWave'] => {
     if (kb.status !== 'connected') return { tone: 'info', note: 'Preview only. Connect the keyboard to run this wave on it.' };
     if (!canStream) return { tone: 'warn', note: "This keyboard can't show app-rendered waves, so this is a preview only." };
     if (!liveSync) return { tone: 'info', note: 'Live sync is off (Device tab), so the wave only runs in the preview.' };
+    if (stillPaused) {
+      return {
+        tone: 'info',
+        note:
+          'Still image saved: the keyboard shows it now and after you close this page. The live wave is paused, ' +
+          "because the keyboard can't show a saved still image and live frames at the same time. Resuming switches " +
+          'it back to the live wave (save again afterwards to keep a still image).',
+        action: { label: 'Resume live wave', onClick: () => setStillPaused(false) },
+      };
+    }
     if (stream.error) return { tone: 'warn', note: `Streaming stopped: ${stream.error}. Pick the effect again to retry.` };
+    const fps = stream.fps ? ` (~${stream.fps} fps)` : '';
+    if (desktop && canStoreStill) {
+      return {
+        tone: 'ok',
+        note:
+          `Running live on your keyboard${fps}. When you close OpenGalaxy, a still image of this gradient is ` +
+          "stored on the keyboard automatically (it can't animate a custom gradient by itself). For a wave that " +
+          'keeps moving without the app, use the Wave effect and save that.',
+      };
+    }
     return {
       tone: 'ok',
       note:
-        `Running live on your keyboard${stream.fps ? ` (~${stream.fps} fps)` : ''}. The keyboard can't animate a ` +
-        "custom gradient by itself, so the wave only flows while this app is open. When you close it, the keyboard " +
-        'shows its saved lighting.' +
-        (kb.device?.canStorePerKey
-          ? ' "Save still image" makes that a frozen snapshot of this gradient. For a wave that keeps moving without ' +
-            'the app, use the Wave effect (rainbow or one colour) and save that.'
+        `Running live on your keyboard${fps}. The keyboard can't animate a custom gradient by itself, so the wave ` +
+        'only flows while this page is open.' +
+        (canStoreStill
+          ? ' "Save still image" stores a frozen snapshot that stays after you close the page (it pauses the live ' +
+            'wave). The OpenGalaxy desktop app does this automatically on close.'
           : ''),
     };
   })();
@@ -197,14 +255,14 @@ export default function App() {
       <main className="panel mt-6 p-5 sm:p-7">
         <div className="mb-7 flex flex-wrap items-center justify-between gap-3">
           <Tabs tabs={TABS} value={tab} onChange={(id) => update({ tab: id })} />
-          {canSync && (
+          {showSaveButton && (
             <Button
               variant={saveState === 'saved' ? 'subtle' : 'primary'}
               onClick={() => void save()}
               disabled={saveState === 'saving'}
               title={
                 isStillImageSave
-                  ? 'The keyboard cannot animate a custom gradient by itself: this stores a frozen snapshot it shows when the app is closed. The wave keeps flowing while the app is open.'
+                  ? 'The keyboard cannot animate a custom gradient by itself: this stores a frozen snapshot that stays after you close the page. It pauses the live wave.'
                   : 'Writes the current lighting to the keyboard'
               }
               className={cx('min-w-32', saveState === 'failed' && 'text-rose-600 dark:text-rose-300')}

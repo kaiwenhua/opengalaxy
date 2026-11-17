@@ -110,7 +110,36 @@ func run() error {
 		_ = cmd.Process.Kill()
 	}
 	_ = srv.Close()
+
+	// Send whatever the page asked to be stored on exit (e.g. a Custom wave still image).
+	if p := life.takePlan(); p != nil {
+		start := time.Now()
+		if err := replayPlan(p); err != nil {
+			logf("exit plan failed after %v: %v", time.Since(start).Round(time.Millisecond), err)
+		} else {
+			logf("exit plan sent: %d steps in %v", len(p.Steps), time.Since(start).Round(time.Millisecond))
+		}
+	}
 	return nil
+}
+
+// logf appends a line to %LOCALAPPDATA%\OpenGalaxy\launcher.log (kept small) for
+// troubleshooting, since the launcher has no console window.
+func logf(format string, args ...any) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(base, appName, "launcher.log")
+	if st, err := os.Stat(path); err == nil && st.Size() > 256<<10 {
+		_ = os.Remove(path)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, args...))
 }
 
 func appURL(port int) string {

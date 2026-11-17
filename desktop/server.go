@@ -15,6 +15,7 @@ const (
 	pingPath      = "/__opengalaxy/ping"
 	heartbeatPath = "/__opengalaxy/heartbeat"
 	byePath       = "/__opengalaxy/bye"
+	onExitPath    = "/__opengalaxy/on-exit"
 )
 
 // Page-visible lifecycle:
@@ -79,6 +80,16 @@ func newHandler(site fs.FS, port int, life *lifecycle) http.Handler {
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
+		case onExitPath:
+			// Only the app's own page may hand over packets: same origin and JSON
+			// (cross-site "simple" requests can't send application/json without CORS).
+			if r.Method != http.MethodPost || r.Header.Get("Origin") != origin ||
+				!strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			handlePlan(w, r, life)
+			return
 		}
 
 		serveFile(w, r, site)
@@ -123,8 +134,23 @@ type lifecycle struct {
 	lastBeat time.Time
 	byeAt    time.Time
 	exitedAt time.Time
+	plan     *exitPlan
 	done     chan struct{}
 	once     sync.Once
+}
+
+func (l *lifecycle) setPlan(p *exitPlan) {
+	l.mu.Lock()
+	l.plan = p
+	l.mu.Unlock()
+}
+
+func (l *lifecycle) takePlan() *exitPlan {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	p := l.plan
+	l.plan = nil
+	return p
 }
 
 func newLifecycle() *lifecycle {
